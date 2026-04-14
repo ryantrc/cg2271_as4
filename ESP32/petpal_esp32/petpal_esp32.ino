@@ -2,7 +2,7 @@
  * =============================================================================
  * PetPal v2 - ESP32-S2 Unified (Final Integration)
  * =============================================================================
- * Sensors + Dashboard API + UART bridge to MCXC444
+ * Sensors + Firebase Realtime Database + UART bridge to MCXC444
  *
  * Protocol with MCXC444:
  *   MCX -> ESP:  [0xAA][0x01][dist_hi][dist_lo]    (distance data)
@@ -26,15 +26,26 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <DHT.h>
 
 /* ========================= CHANGE THESE ================================== */
 #define WIFI_SSID "shiras 24 ultra"
 #define WIFI_PASSWORD "test1234"
-#define API_BASE_URL "http://10.71.16.139:4000" /* Your laptop LAN IP */
-#define DEVICE_API_KEY "device_dev_key"
 #define DEVICE_ID "esp32s2-petpal"
+
+/*
+ * Firebase Realtime Database REST endpoint.
+ * Example:
+ *   https://your-project-id-default-rtdb.asia-southeast1.firebasedatabase.app
+ *
+ * For a quick demo, you can temporarily use permissive RTDB rules.
+ * For locked-down rules, put a database secret or auth token in FIREBASE_AUTH.
+ */
+#define FIREBASE_DATABASE_URL "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_AUTH ""
+#define FIREBASE_DEVICE_PATH "/petpal/devices/" DEVICE_ID
 
 /* ========================= PINS ========================================== */
 #define SHOCK_PIN 5
@@ -117,6 +128,8 @@ uint8_t parseHi = 0;
 /* Text buffer for MCXC444 debug output */
 char textBuf[128];
 int textIdx = 0;
+
+WiFiClientSecure firebaseClient;
 
 /* ========================= SHOCK ISR ===================================== */
 
@@ -305,6 +318,35 @@ String nowIso()
     return String(buf);
 }
 
+/* ========================= FIREBASE REST ================================= */
+
+bool firebaseConfigured()
+{
+    return String(FIREBASE_DATABASE_URL).indexOf("YOUR_PROJECT_ID") < 0;
+}
+
+String firebaseUrl(const char *path)
+{
+    String base = FIREBASE_DATABASE_URL;
+    while (base.endsWith("/"))
+    {
+        base.remove(base.length() - 1);
+    }
+
+    String url = base + path + ".json";
+    if (String(FIREBASE_AUTH).length() > 0)
+    {
+        url += "?auth=" + String(FIREBASE_AUTH);
+    }
+    return url;
+}
+
+bool firebaseBegin(HTTPClient &http, const String &url)
+{
+    firebaseClient.setInsecure(); /* Demo-friendly TLS. Use a root CA for production. */
+    return http.begin(firebaseClient, url);
+}
+
 /* ========================= TELEMETRY POST ================================ */
 
 void postTelemetry()
@@ -312,11 +354,20 @@ void postTelemetry()
     if (WiFi.status() != WL_CONNECTED)
         return;
 
+    if (!firebaseConfigured())
+    {
+        Serial0.println("[FIREBASE] Set FIREBASE_DATABASE_URL before uploading telemetry.");
+        return;
+    }
+
     HTTPClient http;
-    String url = String(API_BASE_URL) + "/device/telemetry";
-    http.begin(url);
+    String url = firebaseUrl(FIREBASE_DEVICE_PATH "/telemetry");
+    if (!firebaseBegin(http, url))
+    {
+        Serial0.println("[FIREBASE] Telemetry begin failed.");
+        return;
+    }
     http.addHeader("Content-Type", "application/json");
-    http.addHeader("x-api-key", DEVICE_API_KEY);
 
     unsigned long uptimeSec = (millis() - bootTime) / 1000;
 
@@ -345,22 +396,23 @@ void postTelemetry()
     json += "\"buzzerOn\":" + String(buzzerOn ? "true" : "false") + ",";
     json += "\"lastEvent\":\"" + lastEvent + "\",";
     json += "\"lastFeedTs\":" + (lastFeedTs.length() > 0 ? ("\"" + lastFeedTs + "\"") : "null") + ",";
-    json += "\"lastPlayTs\":" + (lastPlayTs.length() > 0 ? ("\"" + lastPlayTs + "\"") : "null");
+    json += "\"lastPlayTs\":" + (lastPlayTs.length() > 0 ? ("\"" + lastPlayTs + "\"") : "null") + ",";
+    json += "\"updatedAt\":\"" + nowIso() + "\"";
     json += "}";
 
-    int code = http.POST(json);
-    if (code == 201)
+    int code = http.PUT(json);
+    if (code == 200)
     {
         shockLatched = false;
         feederTriggered = false;
     }
     else if (code > 0)
     {
-        Serial0.printf("[API] Telemetry HTTP %d: %s\n", code, http.getString().c_str());
+        Serial0.printf("[FIREBASE] Telemetry HTTP %d: %s\n", code, http.getString().c_str());
     }
     else
     {
-        Serial0.printf("[API] Telemetry fail: %s\n", http.errorToString(code).c_str());
+        Serial0.printf("[FIREBASE] Telemetry fail: %s\n", http.errorToString(code).c_str());
     }
     http.end();
 }
@@ -372,22 +424,33 @@ void ackCommand(String cmdId, bool success)
     if (WiFi.status() != WL_CONNECTED)
         return;
 
-    HTTPClient http;
-    String url = String(API_BASE_URL) + "/device/commands/" + cmdId + "/ack";
-    http.begin(url);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("x-api-key", DEVICE_API_KEY);
+    if (!firebaseConfigured())
+        return;
 
-    String json = "{\"status\":\"" + String(success ? "executed" : "failed") + "\"}";
-    int code = http.POST(json);
+    HTTPClient http;
+    String url = firebaseUrl(FIREBASE_DEVICE_PATH "/command");
+    if (!firebaseBegin(http, url))
+    {
+        Serial0.println("[FIREBASE] ACK begin failed.");
+        return;
+    }
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{";
+    json += "\"id\":\"" + cmdId + "\",";
+    json += "\"status\":\"" + String(success ? "executed" : "failed") + "\",";
+    json += "\"executedAt\":\"" + nowIso() + "\"";
+    json += "}";
+
+    int code = http.PATCH(json);
 
     if (code == 200)
     {
-        Serial0.printf("[API] ACK sent: %s\n", cmdId.c_str());
+        Serial0.printf("[FIREBASE] ACK sent: %s\n", cmdId.c_str());
     }
     else
     {
-        Serial0.printf("[API] ACK fail HTTP %d\n", code);
+        Serial0.printf("[FIREBASE] ACK fail HTTP %d\n", code);
     }
     http.end();
 }
@@ -397,24 +460,24 @@ void pollCommands()
     if (WiFi.status() != WL_CONNECTED)
         return;
 
-    HTTPClient http;
-    String url = String(API_BASE_URL) + "/device/commands/next";
-    http.begin(url);
-    http.addHeader("x-api-key", DEVICE_API_KEY);
+    if (!firebaseConfigured())
+        return;
 
-    int code = http.GET();
-    if (code == 204)
+    HTTPClient http;
+    String url = firebaseUrl(FIREBASE_DEVICE_PATH "/command");
+    if (!firebaseBegin(http, url))
     {
-        http.end();
-        return; /* No pending commands */
+        Serial0.println("[FIREBASE] Command poll begin failed.");
+        return;
     }
 
+    int code = http.GET();
     if (code != 200)
     {
         if (code > 0)
-            Serial0.printf("[API] Cmd poll HTTP %d\n", code);
+            Serial0.printf("[FIREBASE] Cmd poll HTTP %d\n", code);
         else
-            Serial0.printf("[API] Cmd poll fail: %s\n", http.errorToString(code).c_str());
+            Serial0.printf("[FIREBASE] Cmd poll fail: %s\n", http.errorToString(code).c_str());
         http.end();
         return;
     }
@@ -422,8 +485,12 @@ void pollCommands()
     String body = http.getString();
     http.end();
 
-    /* Parse command id and type */
-    String cmdId = "";
+    if (body == "null" || body.indexOf("\"status\":\"queued\"") < 0)
+    {
+        return;
+    }
+
+    String cmdId = String(millis());
     String cmdType = "";
 
     int idIdx = body.indexOf("\"id\":\"");
@@ -446,7 +513,7 @@ void pollCommands()
 
     if (cmdId.length() == 0 || cmdType.length() == 0)
     {
-        Serial0.println("[API] Failed to parse command");
+        Serial0.println("[FIREBASE] Failed to parse command");
         return;
     }
 
@@ -564,7 +631,7 @@ void setup()
 
     Serial0.println("\n========================================");
     Serial0.println("  PetPal ESP32-S2 Unified");
-    Serial0.println("  Sensors + API + UART Bridge");
+    Serial0.println("  Sensors + Firebase + UART Bridge");
     Serial0.println("========================================\n");
 
     Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
@@ -596,7 +663,7 @@ void setup()
 
     setupWiFi();
 
-    Serial0.printf("[INIT] API: %s\n", API_BASE_URL);
+    Serial0.printf("[INIT] Firebase: %s\n", FIREBASE_DATABASE_URL);
     Serial0.println("[INIT] Ready.\n");
 }
 
@@ -618,14 +685,14 @@ void loop()
     /* Read local sensors + check pet status changes */
     readSensors();
 
-    /* POST telemetry to dashboard */
+    /* PUT telemetry to Firebase */
     if (now - lastTelemetryPost >= TELEMETRY_INTERVAL)
     {
         lastTelemetryPost = now;
         postTelemetry();
     }
 
-    /* Poll dashboard for commands */
+    /* Poll Firebase for dashboard commands */
     if (now - lastCommandPoll >= COMMAND_POLL_MS)
     {
         lastCommandPoll = now;

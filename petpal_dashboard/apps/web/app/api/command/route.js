@@ -1,22 +1,29 @@
+import { devicePath, firebaseFetch } from "../firebase";
+
 export async function POST(request) {
   try {
     const body = await request.json();
-    const base = process.env.RAILWAY_API_BASE_URL || "http://localhost:4000";
-    const key = process.env.SERVER_DASHBOARD_API_KEY || "dashboard_dev_key";
+    const now = new Date().toISOString();
+    const command = {
+      id: String(Date.now()),
+      type: body.type,
+      source: "web-dashboard",
+      status: "queued",
+      createdAt: now,
+      fetchedAt: null,
+      executedAt: null
+    };
 
-    const res = await fetch(`${base}/dashboard/commands`, {
-      method: "POST",
+    await firebaseFetch(devicePath("/command"), {
+      method: "PUT",
       headers: {
-        "Content-Type": "application/json",
-        "x-api-key": key
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify({ type: body.type, source: "web-dashboard" }),
-      cache: "no-store"
+      body: JSON.stringify(command)
     });
 
-    const json = await res.json();
-    return Response.json(json, { status: res.status });
+    return Response.json({ ok: true, command }, { status: 201 });
   } catch (error) {
-    return Response.json({ ok: false, error: error.message || "Proxy error" }, { status: 500 });
+    return Response.json({ ok: false, error: error.message || "Firebase command error" }, { status: 500 });
   }
 }
