@@ -49,7 +49,7 @@
  * For a quick demo, you can temporarily use permissive RTDB rules.
  * For locked-down rules, put a database secret or auth token in FIREBASE_AUTH.
  */
-#define FIREBASE_DATABASE_URL "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_DATABASE_URL "https://petpal-database-default-rtdb.asia-southeast1.firebasedatabase.app/"
 #define FIREBASE_AUTH ""
 #define FIREBASE_DEVICE_PATH "/petpal/devices/" DEVICE_ID
 
