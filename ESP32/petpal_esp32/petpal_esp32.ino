@@ -30,39 +30,39 @@
 #include <DHT.h>
 
 /* ========================= CHANGE THESE ================================== */
-#define WIFI_SSID       "shiras 24 ultra"
-#define WIFI_PASSWORD   "test1234"
-#define API_BASE_URL    "http://10.71.16.139:4000"    /* Your laptop LAN IP */
-#define DEVICE_API_KEY  "device_dev_key"
-#define DEVICE_ID       "esp32s2-petpal"
+#define WIFI_SSID "shiras 24 ultra"
+#define WIFI_PASSWORD "test1234"
+#define API_BASE_URL "http://10.71.16.139:4000" /* Your laptop LAN IP */
+#define DEVICE_API_KEY "device_dev_key"
+#define DEVICE_ID "esp32s2-petpal"
 
 /* ========================= PINS ========================================== */
-#define SHOCK_PIN       5
-#define WATER_PIN       3
-#define DHT_PIN         11
-#define BUZZER_PIN      7
-#define LASER_PIN       9
-#define UART_RX_PIN     18
-#define UART_TX_PIN     17
+#define SHOCK_PIN 5
+#define WATER_PIN 3
+#define DHT_PIN 11
+#define BUZZER_PIN 7
+#define LASER_PIN 9
+#define UART_RX_PIN 18
+#define UART_TX_PIN 17
 
 /* ========================= TIMING ======================================== */
-#define UART_BAUD           115200
-#define WIFI_TIMEOUT_MS     15000
-#define WIFI_RETRY_MS       10000
-#define TELEMETRY_INTERVAL  500
-#define COMMAND_POLL_MS     500
-#define WATER_READ_MS       500
-#define DHT_READ_MS         2000
-#define STATUS_PRINT_MS     2000
-#define SHOCK_DEBOUNCE_MS   200
-#define PET_NEAR_CM         30
-#define PET_FAR_CM          60
+#define UART_BAUD 115200
+#define WIFI_TIMEOUT_MS 15000
+#define WIFI_RETRY_MS 10000
+#define TELEMETRY_INTERVAL 500
+#define COMMAND_POLL_MS 500
+#define WATER_READ_MS 500
+#define DHT_READ_MS 2000
+#define STATUS_PRINT_MS 2000
+#define SHOCK_DEBOUNCE_MS 200
+#define PET_NEAR_CM 30
+#define PET_FAR_CM 60
 
 /* ========================= COMMANDS TO MCXC444 =========================== */
-#define CMD_PET_STATUS  0x01
-#define CMD_FEED        0x10
-#define CMD_PLAY        0x11
-#define CMD_STOP        0x12
+#define CMD_PET_STATUS 0x01
+#define CMD_FEED 0x10
+#define CMD_PLAY 0x11
+#define CMD_STOP 0x12
 
 /* ========================= DHT =========================================== */
 DHT dht(DHT_PIN, DHT11);
@@ -70,30 +70,30 @@ DHT dht(DHT_PIN, DHT11);
 /* ========================= STATE ========================================= */
 
 /* Sensors */
-float    lastTemp       = 0;
-float    lastHumidity   = 0;
-uint16_t lastWater      = 0;
+float lastTemp = 0;
+float lastHumidity = 0;
+uint16_t lastWater = 0;
 uint16_t lastDistanceCm = 999;
 
 /* Shock */
-volatile bool     shockFlag    = false;
-volatile uint32_t shockCount   = 0;
+volatile bool shockFlag = false;
+volatile uint32_t shockCount = 0;
 volatile unsigned long lastShockMs = 0;
 bool shockLatched = false;
 
 /* Pet detection */
-bool petNear         = false;
-bool prevPetNear     = false;
+bool petNear = false;
+bool prevPetNear = false;
 
 /* Actuators */
-bool laserOn         = false;
-bool buzzerOn        = false;
+bool laserOn = false;
+bool buzzerOn = false;
 bool playServoMoving = false;
 bool feederTriggered = false;
 
 /* Buzzer timed */
-bool     buzzerTimedMode = false;
-uint32_t buzzerOffAt     = 0;
+bool buzzerTimedMode = false;
+uint32_t buzzerOffAt = 0;
 
 /* Events */
 String lastEvent = "boot";
@@ -101,18 +101,18 @@ String lastFeedTs = "";
 String lastPlayTs = "";
 
 /* Timing */
-unsigned long lastWaterRead     = 0;
-unsigned long lastDhtRead       = 0;
+unsigned long lastWaterRead = 0;
+unsigned long lastDhtRead = 0;
 unsigned long lastTelemetryPost = 0;
-unsigned long lastCommandPoll   = 0;
-unsigned long lastStatusPrint   = 0;
-unsigned long lastWifiAttempt   = 0;
-unsigned long bootTime          = 0;
+unsigned long lastCommandPoll = 0;
+unsigned long lastStatusPrint = 0;
+unsigned long lastWifiAttempt = 0;
+unsigned long bootTime = 0;
 
 /* UART parser state */
 uint8_t parseState = 0;
-uint8_t parseType  = 0;
-uint8_t parseHi    = 0;
+uint8_t parseType = 0;
+uint8_t parseHi = 0;
 
 /* Text buffer for MCXC444 debug output */
 char textBuf[128];
@@ -120,9 +120,11 @@ int textIdx = 0;
 
 /* ========================= SHOCK ISR ===================================== */
 
-void IRAM_ATTR shockISR() {
+void IRAM_ATTR shockISR()
+{
     unsigned long now = millis();
-    if ((now - lastShockMs) >= SHOCK_DEBOUNCE_MS) {
+    if ((now - lastShockMs) >= SHOCK_DEBOUNCE_MS)
+    {
         lastShockMs = now;
         shockCount++;
         shockFlag = true;
@@ -131,16 +133,19 @@ void IRAM_ATTR shockISR() {
 
 /* ========================= BUZZER ======================================== */
 
-void buzzerTone(uint16_t freq, uint16_t durationMs) {
+void buzzerTone(uint16_t freq, uint16_t durationMs)
+{
     ledcWriteTone(BUZZER_PIN, freq);
     buzzerOn = true;
-    if (durationMs > 0) {
+    if (durationMs > 0)
+    {
         buzzerTimedMode = true;
         buzzerOffAt = millis() + durationMs;
     }
 }
 
-void buzzerOff() {
+void buzzerOff()
+{
     ledcWriteTone(BUZZER_PIN, 0);
     buzzerOn = false;
     buzzerTimedMode = false;
@@ -148,27 +153,31 @@ void buzzerOff() {
 
 /* ========================= LASER ========================================= */
 
-void setLaser(bool on) {
+void setLaser(bool on)
+{
     laserOn = on;
     digitalWrite(LASER_PIN, on ? HIGH : LOW);
 }
 
 /* ========================= UART TO MCXC444 =============================== */
 
-void sendToMCX(uint8_t type) {
+void sendToMCX(uint8_t type)
+{
     /* Send [0xBB][type] — no data byte */
     Serial1.write(0xBB);
     Serial1.write(type);
 }
 
-void sendToMCX(uint8_t type, uint8_t data) {
+void sendToMCX(uint8_t type, uint8_t data)
+{
     /* Send [0xBB][type][data] */
     Serial1.write(0xBB);
     Serial1.write(type);
     Serial1.write(data);
 }
 
-void sendPetStatus(bool near) {
+void sendPetStatus(bool near)
+{
     sendToMCX(CMD_PET_STATUS, near ? 0x01 : 0x00);
 }
 
@@ -182,13 +191,17 @@ void sendPetStatus(bool near) {
 bool inBinaryPacket = false;
 uint8_t binStep = 0;
 
-void processSerial1() {
-    while (Serial1.available()) {
+void processSerial1()
+{
+    while (Serial1.available())
+    {
         uint8_t b = Serial1.read();
 
         /* 0xAA starts a binary packet */
-        if (b == 0xAA && !inBinaryPacket) {
-            if (textIdx > 0) {
+        if (b == 0xAA && !inBinaryPacket)
+        {
+            if (textIdx > 0)
+            {
                 textBuf[textIdx] = '\0';
                 Serial0.println(textBuf);
                 textIdx = 0;
@@ -199,8 +212,10 @@ void processSerial1() {
         }
 
         /* Inside binary packet: [type][hi][lo] */
-        if (inBinaryPacket) {
-            switch (binStep) {
+        if (inBinaryPacket)
+        {
+            switch (binStep)
+            {
             case 0:
                 parseType = b;
                 binStep = 1;
@@ -210,13 +225,17 @@ void processSerial1() {
                 binStep = 2;
                 break;
             case 2:
-                if (parseType == 0x01) {
+                if (parseType == 0x01)
+                {
                     lastDistanceCm = (parseHi << 8) | b;
 
                     /* Pet detection with hysteresis */
-                    if (lastDistanceCm < PET_NEAR_CM) {
+                    if (lastDistanceCm < PET_NEAR_CM)
+                    {
                         petNear = true;
-                    } else if (lastDistanceCm > PET_FAR_CM) {
+                    }
+                    else if (lastDistanceCm > PET_FAR_CM)
+                    {
                         petNear = false;
                     }
 
@@ -230,20 +249,27 @@ void processSerial1() {
         }
 
         /* Text from MCXC444 PRINTF */
-        if (b == '\n') {
+        if (b == '\n')
+        {
             textBuf[textIdx] = '\0';
-            if (textIdx > 0) Serial0.println(textBuf);
+            if (textIdx > 0)
+                Serial0.println(textBuf);
             textIdx = 0;
-        } else if (b != '\r') {
-            if (textIdx < 126) textBuf[textIdx++] = (char)b;
+        }
+        else if (b != '\r')
+        {
+            if (textIdx < 126)
+                textBuf[textIdx++] = (char)b;
         }
     }
 }
 
 /* ========================= WIFI ========================================== */
 
-void setupWiFi() {
-    if (WiFi.status() == WL_CONNECTED) return;
+void setupWiFi()
+{
+    if (WiFi.status() == WL_CONNECTED)
+        return;
 
     Serial0.printf("[WIFI] Connecting to %s...\n", WIFI_SSID);
     WiFi.mode(WIFI_STA);
@@ -253,20 +279,25 @@ void setupWiFi() {
     lastWifiAttempt = millis();
 
     while (WiFi.status() != WL_CONNECTED &&
-           (millis() - lastWifiAttempt) < WIFI_TIMEOUT_MS) {
+           (millis() - lastWifiAttempt) < WIFI_TIMEOUT_MS)
+    {
         delay(100);
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED)
+    {
         Serial0.printf("[WIFI] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-    } else {
+    }
+    else
+    {
         Serial0.println("[WIFI] Timeout. Will retry.");
     }
 }
 
 /* ========================= TIMESTAMP ===================================== */
 
-String nowIso() {
+String nowIso()
+{
     unsigned long sec = millis() / 1000;
     char buf[32];
     snprintf(buf, sizeof(buf), "2026-01-01T%02lu:%02lu:%02luZ",
@@ -276,8 +307,10 @@ String nowIso() {
 
 /* ========================= TELEMETRY POST ================================ */
 
-void postTelemetry() {
-    if (WiFi.status() != WL_CONNECTED) return;
+void postTelemetry()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return;
 
     HTTPClient http;
     String url = String(API_BASE_URL) + "/device/telemetry";
@@ -292,10 +325,13 @@ void postTelemetry() {
     json += "\"mode\":\"normal\",";
     json += "\"uptimeSec\":" + String(uptimeSec) + ",";
 
-    if (lastTemp != 0 || lastHumidity != 0) {
+    if (lastTemp != 0 || lastHumidity != 0)
+    {
         json += "\"temperatureC\":" + String(lastTemp, 1) + ",";
         json += "\"humidityPct\":" + String(lastHumidity, 1) + ",";
-    } else {
+    }
+    else
+    {
         json += "\"temperatureC\":null,";
         json += "\"humidityPct\":null,";
     }
@@ -313,12 +349,17 @@ void postTelemetry() {
     json += "}";
 
     int code = http.POST(json);
-    if (code == 201) {
+    if (code == 201)
+    {
         shockLatched = false;
         feederTriggered = false;
-    } else if (code > 0) {
+    }
+    else if (code > 0)
+    {
         Serial0.printf("[API] Telemetry HTTP %d: %s\n", code, http.getString().c_str());
-    } else {
+    }
+    else
+    {
         Serial0.printf("[API] Telemetry fail: %s\n", http.errorToString(code).c_str());
     }
     http.end();
@@ -326,8 +367,10 @@ void postTelemetry() {
 
 /* ========================= COMMAND POLLING ================================ */
 
-void ackCommand(String cmdId, bool success) {
-    if (WiFi.status() != WL_CONNECTED) return;
+void ackCommand(String cmdId, bool success)
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return;
 
     HTTPClient http;
     String url = String(API_BASE_URL) + "/device/commands/" + cmdId + "/ack";
@@ -338,16 +381,21 @@ void ackCommand(String cmdId, bool success) {
     String json = "{\"status\":\"" + String(success ? "executed" : "failed") + "\"}";
     int code = http.POST(json);
 
-    if (code == 200) {
+    if (code == 200)
+    {
         Serial0.printf("[API] ACK sent: %s\n", cmdId.c_str());
-    } else {
+    }
+    else
+    {
         Serial0.printf("[API] ACK fail HTTP %d\n", code);
     }
     http.end();
 }
 
-void pollCommands() {
-    if (WiFi.status() != WL_CONNECTED) return;
+void pollCommands()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return;
 
     HTTPClient http;
     String url = String(API_BASE_URL) + "/device/commands/next";
@@ -355,14 +403,18 @@ void pollCommands() {
     http.addHeader("x-api-key", DEVICE_API_KEY);
 
     int code = http.GET();
-    if (code == 204) {
+    if (code == 204)
+    {
         http.end();
-        return;  /* No pending commands */
+        return; /* No pending commands */
     }
 
-    if (code != 200) {
-        if (code > 0) Serial0.printf("[API] Cmd poll HTTP %d\n", code);
-        else Serial0.printf("[API] Cmd poll fail: %s\n", http.errorToString(code).c_str());
+    if (code != 200)
+    {
+        if (code > 0)
+            Serial0.printf("[API] Cmd poll HTTP %d\n", code);
+        else
+            Serial0.printf("[API] Cmd poll fail: %s\n", http.errorToString(code).c_str());
         http.end();
         return;
     }
@@ -375,20 +427,25 @@ void pollCommands() {
     String cmdType = "";
 
     int idIdx = body.indexOf("\"id\":\"");
-    if (idIdx >= 0) {
+    if (idIdx >= 0)
+    {
         idIdx += 6;
         int idEnd = body.indexOf("\"", idIdx);
-        if (idEnd > idIdx) cmdId = body.substring(idIdx, idEnd);
+        if (idEnd > idIdx)
+            cmdId = body.substring(idIdx, idEnd);
     }
 
     int typeIdx = body.indexOf("\"type\":\"");
-    if (typeIdx >= 0) {
+    if (typeIdx >= 0)
+    {
         typeIdx += 8;
         int typeEnd = body.indexOf("\"", typeIdx);
-        if (typeEnd > typeIdx) cmdType = body.substring(typeIdx, typeEnd);
+        if (typeEnd > typeIdx)
+            cmdType = body.substring(typeIdx, typeEnd);
     }
 
-    if (cmdId.length() == 0 || cmdType.length() == 0) {
+    if (cmdId.length() == 0 || cmdType.length() == 0)
+    {
         Serial0.println("[API] Failed to parse command");
         return;
     }
@@ -397,7 +454,8 @@ void pollCommands() {
 
     bool success = false;
 
-    if (cmdType == "feed_now") {
+    if (cmdType == "feed_now")
+    {
         /* Send feed command to MCXC444 */
         sendToMCX(CMD_FEED);
         buzzerTone(1000, 500);
@@ -406,9 +464,11 @@ void pollCommands() {
         lastEvent = "feed_now";
         success = true;
         Serial0.println("[CMD] -> MCXC444: FEED");
-
-    } else if (cmdType == "play_mode_toggle") {
-        if (!playServoMoving) {
+    }
+    else if (cmdType == "play_mode_toggle")
+    {
+        if (!playServoMoving)
+        {
             /* Start play */
             setLaser(true);
             sendToMCX(CMD_PLAY);
@@ -416,7 +476,9 @@ void pollCommands() {
             lastPlayTs = nowIso();
             lastEvent = "play_start";
             Serial0.println("[CMD] -> MCXC444: PLAY ON + laser ON");
-        } else {
+        }
+        else
+        {
             /* Stop play */
             setLaser(false);
             sendToMCX(CMD_STOP);
@@ -432,11 +494,13 @@ void pollCommands() {
 
 /* ========================= SENSOR READING ================================ */
 
-void readSensors() {
+void readSensors()
+{
     unsigned long now = millis();
 
     /* Shock */
-    if (shockFlag) {
+    if (shockFlag)
+    {
         noInterrupts();
         shockFlag = false;
         interrupts();
@@ -447,35 +511,43 @@ void readSensors() {
     }
 
     /* Water */
-    if (now - lastWaterRead >= WATER_READ_MS) {
+    if (now - lastWaterRead >= WATER_READ_MS)
+    {
         lastWaterRead = now;
         lastWater = analogRead(WATER_PIN);
     }
 
     /* DHT */
-    if (now - lastDhtRead >= DHT_READ_MS) {
+    if (now - lastDhtRead >= DHT_READ_MS)
+    {
         lastDhtRead = now;
         float t = dht.readTemperature();
         float h = dht.readHumidity();
-        if (!isnan(t) && !isnan(h)) {
+        if (!isnan(t) && !isnan(h))
+        {
             lastTemp = t;
             lastHumidity = h;
         }
     }
 
     /* Buzzer auto-off */
-    if (buzzerTimedMode && now >= buzzerOffAt) {
+    if (buzzerTimedMode && now >= buzzerOffAt)
+    {
         buzzerOff();
     }
 
     /* Pet arrival/departure events */
-    if (petNear != prevPetNear) {
+    if (petNear != prevPetNear)
+    {
         prevPetNear = petNear;
-        if (petNear) {
+        if (petNear)
+        {
             lastEvent = "pet_arrived";
             buzzerTone(1500, 300);
             Serial0.printf("[PET] *** DETECTED *** dist: %d cm\n", lastDistanceCm);
-        } else {
+        }
+        else
+        {
             lastEvent = "pet_left";
             Serial0.printf("[PET] Left. dist: %d cm\n", lastDistanceCm);
         }
@@ -484,7 +556,8 @@ void readSensors() {
 
 /* ========================= SETUP ========================================= */
 
-void setup() {
+void setup()
+{
     Serial0.begin(115200);
     delay(3000);
     bootTime = millis();
@@ -529,11 +602,13 @@ void setup() {
 
 /* ========================= LOOP ========================================== */
 
-void loop() {
+void loop()
+{
     unsigned long now = millis();
 
     /* WiFi reconnect */
-    if (WiFi.status() != WL_CONNECTED && (now - lastWifiAttempt) >= WIFI_RETRY_MS) {
+    if (WiFi.status() != WL_CONNECTED && (now - lastWifiAttempt) >= WIFI_RETRY_MS)
+    {
         setupWiFi();
     }
 
@@ -544,19 +619,22 @@ void loop() {
     readSensors();
 
     /* POST telemetry to dashboard */
-    if (now - lastTelemetryPost >= TELEMETRY_INTERVAL) {
+    if (now - lastTelemetryPost >= TELEMETRY_INTERVAL)
+    {
         lastTelemetryPost = now;
         postTelemetry();
     }
 
     /* Poll dashboard for commands */
-    if (now - lastCommandPoll >= COMMAND_POLL_MS) {
+    if (now - lastCommandPoll >= COMMAND_POLL_MS)
+    {
         lastCommandPoll = now;
         pollCommands();
     }
 
     /* Status print */
-    if (now - lastStatusPrint >= STATUS_PRINT_MS) {
+    if (now - lastStatusPrint >= STATUS_PRINT_MS)
+    {
         lastStatusPrint = now;
         Serial0.println("--- STATUS ---");
         Serial0.printf("  Dist:   %d cm\n", lastDistanceCm);
