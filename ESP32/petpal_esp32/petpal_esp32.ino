@@ -76,6 +76,7 @@
 #define STATUS_PRINT_MS 2000
 #define GY_DEBOUNCE_MS 500
 #define NTP_TIMEOUT_MS 2000
+#define PRESENCE_HOLD_MS 5000
 
 /* ========================= PET DETECTION ================================= */
 #define PET_NEAR_CM 30
@@ -116,6 +117,13 @@ bool shockLatched = false;
 /* Pet detection */
 bool petNear = false;
 bool prevPetNear = false;
+
+/* Presence hold + source lock (published to dashboard) */
+bool presenceAround = false;
+unsigned long presenceHoldUntil = 0;
+String presenceTriggerSensor = "";
+String presenceLastSeenAt = "";
+String presenceUpdatedAt = "";
 
 /* Actuators */
 bool laserOn = false;
@@ -225,6 +233,50 @@ void sendToMCX(uint8_t type, uint8_t data)
 void sendPetStatus(bool near)
 {
     sendToMCX(CMD_PET_STATUS, near ? 0x01 : 0x00);
+}
+
+/* ========================= PRESENCE HOLD ================================ */
+
+void updatePresenceState()
+{
+    unsigned long now = millis();
+    String sensorNow = "";
+
+    if (petNear)
+    {
+        sensorNow = "ultrasonic";
+    }
+    else if (shockLatched)
+    {
+        sensorNow = "shock";
+    }
+
+    if (now >= presenceHoldUntil)
+    {
+        if (sensorNow.length() > 0)
+        {
+            presenceAround = true;
+            presenceHoldUntil = now + PRESENCE_HOLD_MS;
+            presenceTriggerSensor = sensorNow;
+            String ts = nowIso();
+            presenceLastSeenAt = ts;
+            presenceUpdatedAt = ts;
+        }
+        else
+        {
+            if (presenceAround)
+            {
+                presenceUpdatedAt = nowIso();
+            }
+            presenceAround = false;
+            presenceTriggerSensor = "";
+        }
+    }
+    else
+    {
+        /* Keep trigger source locked during hold window. */
+        presenceAround = true;
+    }
 }
 
 /* ========================= UART FROM MCXC444 ============================= */
@@ -442,6 +494,10 @@ void postTelemetry()
 
     json += "\"distanceCm\":" + String(lastDistanceCm) + ",";
     json += "\"shockDetected\":" + String(shockLatched ? "true" : "false") + ",";
+    json += "\"petAround\":" + String(presenceAround ? "true" : "false") + ",";
+    json += "\"lastTriggerSensor\":" + (presenceTriggerSensor.length() > 0 ? ("\"" + presenceTriggerSensor + "\"") : "null") + ",";
+    json += "\"lastSeenAt\":" + (presenceLastSeenAt.length() > 0 ? ("\"" + presenceLastSeenAt + "\"") : "null") + ",";
+    json += "\"presenceUpdatedAt\":" + (presenceUpdatedAt.length() > 0 ? ("\"" + presenceUpdatedAt + "\"") : "null") + ",";
     json += "\"waterLevelRaw\":" + String(lastWater) + ",";
     json += "\"waterLevel\":\"" + getWaterLevel(lastWater) + "\",";
     json += "\"laserOn\":" + String(laserOn ? "true" : "false") + ",";
@@ -770,6 +826,9 @@ void loop()
     /* Read local sensors */
     readSensors();
 
+    /* Hold presence for 5 seconds with source lock */
+    updatePresenceState();
+
     /* PUT telemetry to Firebase */
     if (now - lastTelemetryPost >= TELEMETRY_INTERVAL)
     {
@@ -790,7 +849,10 @@ void loop()
         lastStatusPrint = now;
         Serial0.println("--- STATUS ---");
         Serial0.printf("  Dist:   %d cm\n", lastDistanceCm);
-        Serial0.printf("  Pet:    %s\n", petNear ? "YES" : "no");
+        Serial0.printf("  Pet:    %s\n", presenceAround ? "YES" : "no");
+        Serial0.printf("  Sensor: %s\n", presenceTriggerSensor.length() > 0
+                            ? presenceTriggerSensor.c_str()
+                            : "-");
         Serial0.printf("  Temp:   %.1fC\n", lastTemp);
         Serial0.printf("  Humid:  %.1f%%\n", lastHumidity);
         Serial0.printf("  Water:  %d (%s)\n", lastWater,
