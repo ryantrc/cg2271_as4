@@ -581,6 +581,14 @@ void pollCommands()
 
     if (cmdType == "feed_now")
     {
+        /* Stop play mode first if active */
+        if (playServoMoving)
+        {
+            setLaser(false);
+            sendToMCX(CMD_STOP);
+            playServoMoving = false;
+            Serial0.println("[CMD] Play mode stopped for feeding");
+        }
         sendToMCX(CMD_FEED);
         buzzerTone(1000, 500);
         feederTriggered = true;
