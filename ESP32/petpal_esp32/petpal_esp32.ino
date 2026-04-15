@@ -13,7 +13,7 @@
  *
  * Pins:
  *   GPIO 1  - Water level AO (ADC)
- *   GPIO 3  - MPU6050 INT (shock interrupt)
+ *   GPIO 3  - MPU6050 INT (gy interrupt)
  *   GPIO 7  - Passive buzzer (LEDC PWM)
  *   GPIO 8  - I2C SDA (MPU6050)
  *   GPIO 9  - Laser emitter (digital out)
@@ -36,6 +36,11 @@
 #include <Wire.h>
 #include <MPU6050.h>
 #include <time.h>
+
+#define Serial0 Serial
+#define BUZZER_LEDC_CH 0
+
+String nowIso();
 
 /* ========================= CHANGE THESE ================================== */
 #define WIFI_SSID "AndroidAP"
@@ -83,10 +88,10 @@
 #define PET_FAR_CM 60
 
 /* ========================= WATER LEVELS ================================== */
-#define WATER_EMPTY 300 /* 0   - 50   = empty  */
-#define WATER_LOW 2000  /* 50  - 500  = low    */
-#define WATER_OK 2500   /* 500 - 2500 = ok     */
-                        /* 2500+      = full   */
+#define WATER_EMPTY 500 /* 0   - 50   = empty  */
+#define WATER_LOW 2500  /* 50  - 500  = low    */
+#define WATER_OK 3000  /* 500 - 2500 = ok     */
+                       /* 2500+      = full   */
 
 /* ========================= COMMANDS TO MCXC444 =========================== */
 #define CMD_PET_STATUS 0x01
@@ -108,11 +113,12 @@ float lastHumidity = 0;
 uint16_t lastWater = 0;
 uint16_t lastDistanceCm = 999;
 
-/* Shock (MPU6050 motion interrupt) */
-volatile bool shockFlag = false;
-volatile uint32_t shockCount = 0;
-volatile unsigned long lastShockMs = 0;
-bool shockLatched = false;
+/* GY (MPU6050 motion interrupt) */
+volatile bool gyFlag = false;
+volatile uint32_t gyCount = 0;
+volatile unsigned long lastGyMs = 0;
+bool gyEventPending = false;
+unsigned long lastUltrasonicMs = 0;
 
 /* Pet detection */
 bool petNear = false;
@@ -174,16 +180,16 @@ String getWaterLevel(uint16_t raw)
     return "full";
 }
 
-/* ========================= SHOCK ISR (MPU6050 INT) ======================= */
+/* ========================= GY ISR (MPU6050 INT) ========================== */
 
-void IRAM_ATTR shockISR()
+void IRAM_ATTR gyISR()
 {
     unsigned long now = millis();
-    if ((now - lastShockMs) >= GY_DEBOUNCE_MS)
+    if ((now - lastGyMs) >= GY_DEBOUNCE_MS)
     {
-        lastShockMs = now;
-        shockCount++;
-        shockFlag = true;
+        lastGyMs = now;
+        gyCount++;
+        gyFlag = true;
     }
 }
 
@@ -191,7 +197,7 @@ void IRAM_ATTR shockISR()
 
 void buzzerTone(uint16_t freq, uint16_t durationMs)
 {
-    ledcWriteTone(BUZZER_PIN, freq);
+    ledcWriteTone(BUZZER_LEDC_CH, freq);
     buzzerOn = true;
     if (durationMs > 0)
     {
@@ -202,7 +208,7 @@ void buzzerTone(uint16_t freq, uint16_t durationMs)
 
 void buzzerOff()
 {
-    ledcWriteTone(BUZZER_PIN, 0);
+    ledcWriteTone(BUZZER_LEDC_CH, 0);
     buzzerOn = false;
     buzzerTimedMode = false;
 }
@@ -241,18 +247,27 @@ void updatePresenceState()
 {
     unsigned long now = millis();
     String sensorNow = "";
-
-    if (petNear)
-    {
-        sensorNow = "ultrasonic";
-    }
-    else if (shockLatched)
-    {
-        sensorNow = "shock";
-    }
+    bool wasAround = presenceAround;
 
     if (now >= presenceHoldUntil)
     {
+        bool ultrasonicCandidate = petNear;
+        bool gyCandidate = gyEventPending;
+
+        if (ultrasonicCandidate && gyCandidate)
+        {
+            // If both are active, keep the sensor that triggered first.
+            sensorNow = (lastGyMs <= lastUltrasonicMs) ? "gy" : "ultrasonic";
+        }
+        else if (ultrasonicCandidate)
+        {
+            sensorNow = "ultrasonic";
+        }
+        else if (gyCandidate)
+        {
+            sensorNow = "gy";
+        }
+
         if (sensorNow.length() > 0)
         {
             presenceAround = true;
@@ -261,12 +276,20 @@ void updatePresenceState()
             String ts = nowIso();
             presenceLastSeenAt = ts;
             presenceUpdatedAt = ts;
+
+            if (!wasAround)
+            {
+                lastEvent = "pet arrived (" + sensorNow + ")";
+            }
+
+            gyEventPending = false;
         }
         else
         {
             if (presenceAround)
             {
                 presenceUpdatedAt = nowIso();
+                lastEvent = "pet left";
             }
             presenceAround = false;
             presenceTriggerSensor = "";
@@ -276,6 +299,7 @@ void updatePresenceState()
     {
         /* Keep trigger source locked during hold window. */
         presenceAround = true;
+        gyEventPending = false;
     }
 }
 
@@ -317,6 +341,7 @@ void processSerial1()
             case 2:
                 if (parseType == 0x01)
                 {
+                    bool wasPetNear = petNear;
                     lastDistanceCm = ((uint16_t)parseHi << 8) | b;
 
                     /* Pet detection with hysteresis */
@@ -327,6 +352,11 @@ void processSerial1()
                     else if (lastDistanceCm > PET_FAR_CM)
                     {
                         petNear = false;
+                    }
+
+                    if (!wasPetNear && petNear)
+                    {
+                        lastUltrasonicMs = millis();
                     }
 
                     sendPetStatus(petNear);
@@ -493,7 +523,8 @@ void postTelemetry()
     }
 
     json += "\"distanceCm\":" + String(lastDistanceCm) + ",";
-    json += "\"shockDetected\":" + String(shockLatched ? "true" : "false") + ",";
+    bool gyDetected = presenceAround && presenceTriggerSensor == "gy";
+    json += "\"gyDetected\":" + String(gyDetected ? "true" : "false") + ",";
     json += "\"petAround\":" + String(presenceAround ? "true" : "false") + ",";
     json += "\"lastTriggerSensor\":" + (presenceTriggerSensor.length() > 0 ? ("\"" + presenceTriggerSensor + "\"") : "null") + ",";
     json += "\"lastSeenAt\":" + (presenceLastSeenAt.length() > 0 ? ("\"" + presenceLastSeenAt + "\"") : "null") + ",";
@@ -514,7 +545,6 @@ void postTelemetry()
     int code = http.PUT(json);
     if (code == 200)
     {
-        shockLatched = false;
         feederTriggered = false;
     }
     else if (code > 0)
@@ -674,7 +704,6 @@ void pollCommands()
         }
         success = true;
     }
-
     ackCommand(cmdId, success);
 }
 
@@ -684,16 +713,15 @@ void readSensors()
 {
     unsigned long now = millis();
 
-    /* Shock (MPU6050 motion interrupt) */
-    if (shockFlag)
+    /* GY (MPU6050 motion interrupt) */
+    if (gyFlag)
     {
         noInterrupts();
-        shockFlag = false;
+        gyFlag = false;
         interrupts();
-        shockLatched = true;
-        lastEvent = "shock";
+        gyEventPending = true;
         buzzerTone(2400, 120);
-        Serial0.printf("[SHOCK] Tap #%lu\n", shockCount);
+        Serial0.printf("[GY] Tap #%lu\n", gyCount);
     }
 
     /* Water */
@@ -728,14 +756,12 @@ void readSensors()
         prevPetNear = petNear;
         if (petNear)
         {
-            lastEvent = "pet_arrived";
             buzzerTone(1500, 300);
             Serial0.printf("[PET] *** DETECTED *** dist: %d cm\n",
                            lastDistanceCm);
         }
         else
         {
-            lastEvent = "pet_left";
             Serial0.printf("[PET] Left. dist: %d cm\n", lastDistanceCm);
         }
     }
@@ -766,8 +792,9 @@ void setup()
     dht.begin();
 
     /* Buzzer */
-    ledcAttach(BUZZER_PIN, 1000, 8);
-    ledcWriteTone(BUZZER_PIN, 0);
+    ledcSetup(BUZZER_LEDC_CH, 1000, 8);
+    ledcAttachPin(BUZZER_PIN, BUZZER_LEDC_CH);
+    ledcWriteTone(BUZZER_LEDC_CH, 0);
 
     /* Laser */
     pinMode(LASER_PIN, OUTPUT);
@@ -791,7 +818,7 @@ void setup()
     mpu.setIntMotionEnabled(true);
 
     pinMode(MPU_INT_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(MPU_INT_PIN), shockISR, RISING);
+    attachInterrupt(digitalPinToInterrupt(MPU_INT_PIN), gyISR, RISING);
 
     Serial0.printf("[INIT] Water=%d DHT=%d Buzzer=%d Laser=%d\n",
                    WATER_PIN, DHT_PIN, BUZZER_PIN, LASER_PIN);
@@ -859,13 +886,13 @@ void loop()
         Serial0.printf("  Dist:   %d cm\n", lastDistanceCm);
         Serial0.printf("  Pet:    %s\n", presenceAround ? "YES" : "no");
         Serial0.printf("  Sensor: %s\n", presenceTriggerSensor.length() > 0
-                                             ? presenceTriggerSensor.c_str()
-                                             : "-");
+                            ? presenceTriggerSensor.c_str()
+                            : "-");
         Serial0.printf("  Temp:   %.1fC\n", lastTemp);
         Serial0.printf("  Humid:  %.1f%%\n", lastHumidity);
         Serial0.printf("  Water:  %d (%s)\n", lastWater,
                        getWaterLevel(lastWater).c_str());
-        Serial0.printf("  Shock:  %lu\n", shockCount);
+        Serial0.printf("  GY:     %lu\n", gyCount);
         Serial0.printf("  Laser:  %s\n", laserOn ? "ON" : "OFF");
         Serial0.printf("  Play:   %s\n", playServoMoving ? "YES" : "no");
         Serial0.printf("  WiFi:   %s\n", WiFi.status() == WL_CONNECTED

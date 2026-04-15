@@ -15,9 +15,9 @@ function fmtTs(ts) {
 
 function prettySensor(sensor) {
   if (!sensor) return "-";
-  if (sensor === "ultrasonic+shock") return "Ultrasonic + Shock";
+  if (sensor === "ultrasonic+gy") return "Ultrasonic + GY";
   if (sensor === "ultrasonic") return "Ultrasonic";
-  if (sensor === "shock") return "Shock";
+  if (sensor === "gy") return "GY";
   return sensor;
 }
 
@@ -136,7 +136,7 @@ export default function HomePage() {
     <main>
       <h1>{process.env.NEXT_PUBLIC_DASHBOARD_TITLE || "PetPal Control Center"}</h1>
       <TopTabs />
-      <p className="subtitle">Smart pet insights from DHT, ultrasonic, and shock sensors.</p>
+      <p className="subtitle">Smart pet insights from DHT, ultrasonic, and GY sensors.</p>
 
       <section className="hero-layout">
         <aside className="weather-left">
@@ -181,7 +181,7 @@ export default function HomePage() {
           <h3>{petAroundLabel}</h3>
           <p>Trigger Sensor: {prettySensor(presence?.lastTriggerSensor)}</p>
           <p>Distance: {telemetry?.distanceCm ?? "-"} cm</p>
-          <p>Shock Sensor: {telemetry?.shockDetected ? "Triggered" : "Idle"}</p>
+          <p>GY Sensor: {telemetry?.gyDetected ? "Triggered" : "Idle"}</p>
           <p>Updated: {fmtTs(presence?.updatedAt)}</p>
         </section>
 
