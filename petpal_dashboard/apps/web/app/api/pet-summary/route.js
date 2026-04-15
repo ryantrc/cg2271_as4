@@ -1,6 +1,6 @@
 import { devicePath, firebaseFetch } from "../firebase";
 
-const GROQ_API_KEY = "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";
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export async function GET() {
