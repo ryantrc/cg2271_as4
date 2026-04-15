@@ -20,14 +20,15 @@ export async function GET() {
 
     const receivedAt = firebaseTimeToIso(telemetry?.updatedAtMs) || telemetry?.updatedAt || null;
     const ultrasonicDetected = Number(telemetry?.distanceCm) <= Number(process.env.PET_DISTANCE_THRESHOLD_CM || 30);
-    const shockDetected = telemetry?.shockDetected === true;
-    const isAround = Boolean(ultrasonicDetected || shockDetected);
-    const triggerSensor = ultrasonicDetected && shockDetected
-      ? "ultrasonic+shock"
+    const gyDetected = telemetry?.gyDetected === true;
+
+    const legacyIsAround = Boolean(ultrasonicDetected || gyDetected);
+    const legacyTriggerSensor = ultrasonicDetected && gyDetected
+      ? "ultrasonic+gy"
       : ultrasonicDetected
         ? "ultrasonic"
-        : shockDetected
-          ? "shock"
+        : gyDetected
+          ? "gy"
           : null;
 
     // Log new events to Firebase history (skip pet_left and boot)
@@ -63,6 +64,12 @@ export async function GET() {
       } catch (e) { /* don't block state response */ }
     }
 
+    const hasEspPresence = typeof telemetry?.petAround === "boolean";
+    const isAround = hasEspPresence ? telemetry.petAround === true : legacyIsAround;
+    const triggerSensor = telemetry?.lastTriggerSensor || legacyTriggerSensor;
+    const lastSeenAt = telemetry?.lastSeenAt || (isAround ? receivedAt : null);
+    const updatedAt = telemetry?.presenceUpdatedAt || receivedAt;
+
     return Response.json({
       ok: true,
       telemetry: telemetry
@@ -73,9 +80,9 @@ export async function GET() {
         : null,
       presence: {
         isAround,
-        lastSeenAt: isAround ? receivedAt : null,
+        lastSeenAt,
         lastTriggerSensor: triggerSensor,
-        updatedAt: receivedAt
+        updatedAt
       },
       petEvents: [],
       commands: command ? [command] : [],
